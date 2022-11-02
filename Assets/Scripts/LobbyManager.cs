@@ -1,8 +1,10 @@
+using System.Collections.Specialized;
+using System.IO.IsolatedStorage;
+//using System.Drawing;
 using System.ComponentModel;
 using System.Security;
 using System.Runtime.CompilerServices;
 using System.Xml.Schema;
-//using System.Drawing;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -15,6 +17,7 @@ public class LobbyManager : NetworkBehaviour
     public GameObject playerScrollContent;
     public TMPro.TMP_Text txtPlayerNumber;
     public Button btnStart;
+    public Button btnReady;
 
     public Player playerPrefab;
     public LobbyPlayerPanel playerPanelPrefab;
@@ -24,6 +27,16 @@ public class LobbyManager : NetworkBehaviour
     private NetworkList<PlayerInfo> allPlayers = new NetworkList<PlayerInfo>();
     private List<LobbyPlayerPanel> playerPanels = new List<LobbyPlayerPanel>();
 
+    private Color[] playerColors = new Color[]{
+        Color.blue,
+        Color.green,
+        Color.yellow,
+        Color.magenta,
+        Color.cyan
+    };
+    private int colorIndex = 0;
+
+
 
     public void Start(){
         if(IsHost){
@@ -31,9 +44,17 @@ public class LobbyManager : NetworkBehaviour
             RefreshPlayerPanels();
         }
     }
+    private Color NextColor(){
+        Color newColor = playerColors[colorIndex];
+        colorIndex =+ 1;
+        if(colorIndex > playerColors.Length - 1){
+            colorIndex = 0;
+        }
+        return newColor;
+    }
 
     private void AddPlayerToList(ulong clientId){
-        allPlayers.Add(new PlayerInfo(clientId, Color.red));
+        allPlayers.Add(new PlayerInfo(clientId, NextColor(), false));
     }
 
     private void AddPlayerPanel(PlayerInfo info){
@@ -41,6 +62,7 @@ public class LobbyManager : NetworkBehaviour
         newPanel.transform.SetParent(playerScrollContent.transform, false);
         newPanel.SetName($"Player {info.clientId.ToString()}");
         newPanel.SetColor(info.color);
+        newPanel.SetReady(info.isReady);
         playerPanels.Add(newPanel);
     }
 
@@ -78,15 +100,41 @@ public class LobbyManager : NetworkBehaviour
     public override void OnNetworkSpawn() {
         if(IsHost){
             NetworkManager.Singleton.OnClientConnectedCallback += HostOnClientConnected;
-            //NetworkManager.Singleton.OnClientDisconnectedCallback += HostOnClientDisconnected;
+            NetworkManager.Singleton.OnClientDisconnectCallback += HostOnClientDisconnected;
+            btnReady.gameObject.SetActive(false);
         }
 
         base.OnNetworkSpawn();
 
-        if(IsClient){
+        if(IsClient && !IsHost){
             allPlayers.OnListChanged += ClientOnAllPlayersChanged;
-            txtPlayerNumber.text = $"Player #{NetworkManager.LocalClientId}";
+            btnStart.gameObject.SetActive(false);
         }
+        txtPlayerNumber.text = $"Player #{NetworkManager.LocalClientId}";
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    public void ToggleReadyServerRpc(ServerRpcParams serverRpcParams = default){
+        if(IsHost){
+            return;
+        }
+        ulong clientId = serverRpcParams.Receive.SenderClientId;
+        int playerIndex = FindPlayerIndex(clientId);
+        PlayerInfo info = allPlayers[playerIndex];
+
+        info.isReady = !info.isReady;
+        allPlayers[playerIndex] = info;
+
+        info = allPlayers[playerIndex];
+
+        int readyCount = 0;
+        foreach(PlayerInfo readyInfo in allPlayers){
+            if (readyInfo.isReady){
+                readyCount += 1;
+            }
+        }
+
+        btnStart.enabled = readyCount == allPlayers.Count - 1;
     }
 
     private void ClientOnAllPlayersChanged(NetworkListEvent<PlayerInfo> changeEvent){
@@ -104,6 +152,10 @@ public class LobbyManager : NetworkBehaviour
             allPlayers.RemoveAt(index);
             RefreshPlayerPanels();
         }
+    }
+
+    private void ClientOnReadyClicked(){
+        ToggleReadyServerRpc();
     }
 
 }
